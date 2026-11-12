@@ -1744,6 +1744,8 @@ private final class ConceptsTopicSwipePanel: UIView, UIGestureRecognizerDelegate
     private var itemsHidden = false
     /// v18: стекло родной капсулы «следующий чат», которое перетекает в выбранную аватарку ряда.
     private var morphGlass: GlassBackgroundView?
+    /// v49: копия стрелки капсулы лежит в обрезке по форме стекла и стягивается вместе с ним.
+    private var morphArrowClip: UIView?
     private var morphingRow: Int?
     private var cardShadowIsAnimatingOpen = false
     private let cardPan = UIPanGestureRecognizer()
@@ -3246,9 +3248,19 @@ private final class ConceptsTopicSwipePanel: UIView, UIGestureRecognizerDelegate
     private func renderListSnapshot() -> UIImage {
         let wasAlpha = self.listContainer.alpha
         self.listContainer.alpha = 1.0
+        // v49: размытый край шапки (EdgeEffectView) в снимке слоя выходил серым градиентом — в снимке он рисуется
+        // обычным градиентом цвета фона списка.
+        let fadeWasHidden = self.listTopFade.isHidden
+        self.listTopFade.isHidden = true
+        let fadeHeight = self.listTopFade.frame.height
+        let fadeColor = self.listTopFadeColor
         let image = UIGraphicsImageRenderer(bounds: self.listContainer.bounds).image { context in
             self.listContainer.layer.render(in: context.cgContext)
+            if !fadeWasHidden, fadeHeight > 0.0, let gradient = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: [fadeColor.withAlphaComponent(CGFloat(ConceptsTopicSwipeTune.v("fadeAlpha", 0.8))).cgColor, fadeColor.withAlphaComponent(0.0).cgColor] as CFArray, locations: [0.0, 1.0]) {
+                context.cgContext.drawLinearGradient(gradient, start: CGPoint(x: 0.0, y: 0.0), end: CGPoint(x: 0.0, y: fadeHeight), options: [])
+            }
         }
+        self.listTopFade.isHidden = fadeWasHidden
         self.listContainer.alpha = wasAlpha
         return image
     }
@@ -3883,9 +3895,18 @@ private final class ConceptsTopicSwipePanel: UIView, UIGestureRecognizerDelegate
                 copy.contents = arrow.contents
                 copy.contentsScale = arrow.contentsScale
                 copy.contentsGravity = arrow.contentsGravity
-                copy.frame = arrowRect
+                // v49: стрелка обрезана по капсуле и едет с её верхом — при стягивании стекла она торчала над ним.
+                let clip = UIView(frame: rect)
+                clip.isUserInteractionEnabled = false
+                clip.clipsToBounds = true
+                clip.layer.cornerRadius = rect.width / 2.0
+                // Под аватаркой: растущая аватарка закрывает стрелку, а не стрелка ложится на лицо.
+                self.rowContainer.insertSubview(clip, belowSubview: item)
+                self.morphArrowClip?.removeFromSuperview()
+                self.morphArrowClip = clip
+                copy.frame = arrowRect.offsetBy(dx: -rect.minX, dy: -rect.minY)
                 copy.opacity = 0.0
-                self.rowContainer.layer.addSublayer(copy)
+                clip.layer.addSublayer(copy)
                 let fade = CABasicAnimation(keyPath: "opacity")
                 fade.fromValue = 1.0 as NSNumber
                 fade.toValue = 0.0 as NSNumber
@@ -3893,8 +3914,11 @@ private final class ConceptsTopicSwipePanel: UIView, UIGestureRecognizerDelegate
                 fade.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
                 copy.add(fade, forKey: "conceptsTopicSwipeArrowFade")
                 ComponentTransition(animation: .curve(duration: arrowDuration, curve: .easeInOut)).animateBlur(layer: copy, fromRadius: 0.0, toRadius: CGFloat(ConceptsTopicSwipeTune.v("morphArrowBlur", 6.0)), removeOnCompletion: false)
-                Queue.mainQueue().after(arrowDuration + 0.05, { [weak copy] in
-                    copy?.removeFromSuperlayer()
+                Queue.mainQueue().after(max(arrowDuration + 0.05, 0.5), { [weak self, weak clip] in
+                    clip?.removeFromSuperview()
+                    if let self, self.morphArrowClip === clip {
+                        self.morphArrowClip = nil
+                    }
                 })
                 ConceptsTopicSwipeAutopilot.mark("arrowFade|\(Int(arrowRect.width))|\(Int(arrowRect.height))")
             }
@@ -3943,6 +3967,10 @@ private final class ConceptsTopicSwipePanel: UIView, UIGestureRecognizerDelegate
         transition.setPosition(view: item, position: toCenter)
         transition.setTransform(view: item, transform: CATransform3DMakeAffineTransform(toTransform))
         transition.setFrame(view: glass, frame: target)
+        if let arrowClip = self.morphArrowClip {
+            transition.setFrame(view: arrowClip, frame: target)
+            transition.setCornerRadius(layer: arrowClip.layer, cornerRadius: size / 2.0)
+        }
         glass.update(size: target.size, cornerRadius: size / 2.0, isDark: self.presentationData.theme.overallDarkAppearance, tintColor: .init(kind: .panel), transition: transition)
         item.showBadge(duration: 0.25, delay: 0.15)
         // v22: инерция — аватарка со стеклом по ходу того же движения проседает вниз и плавно
@@ -3953,7 +3981,7 @@ private final class ConceptsTopicSwipePanel: UIView, UIGestureRecognizerDelegate
             let t = dipDuration * Double(step) / 42.0
             dipValues.append(step == 42 ? 0.0 : CGFloat(48.0 * exp(-7.0 * t) * sin(7.0 * t)))
         }
-        for layer in [item.layer, glass.layer] {
+        for layer in [item.layer, glass.layer] + (self.morphArrowClip.flatMap { [$0.layer] } ?? []) {
             let dip = CAKeyframeAnimation(keyPath: "position.y")
             dip.values = dipValues
             dip.calculationMode = .linear
