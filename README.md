@@ -1,4 +1,4 @@
-# Next Chat Swipe — pick where to go next
+# Swipe to Unread Chats — pull up in any chat to preview and open the next unread one
 
 Pulling up at the end of a channel already takes you to the next unread channel — but only to the one Telegram
 picked, and only in channels. This concept makes the same gesture work in **any chat** and lets you **choose**:
