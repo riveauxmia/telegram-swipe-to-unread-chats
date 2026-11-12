@@ -116,7 +116,7 @@ enum ConceptsTopicSwipeTune {
         "scrubK": 20.0,
         "swapDur": 0.2,
         "embedDelay": 0.05,
-        "embedDelayList": 0.12,
+        "embedDelayList": 0.05,
         "scrubX1": 0.1,
         "scrubY1": 0.05,
         "scrubX2": 0.9,
@@ -1806,6 +1806,9 @@ private final class ConceptsTopicSwipePanel: UIView, UIGestureRecognizerDelegate
         self.listHeader.textAlignment = .center
         self.listContainer.addSubview(self.listHeader)
         self.listScroll.alwaysBounceVertical = true
+        // v50: без системного отступа под строку состояния — у повёрнутой соседней карточки он был другим, и строки
+        // живого списка в момент отпускания вставали на ≈19 pt ниже снимка, затем съезжали обратно.
+        self.listScroll.contentInsetAdjustmentBehavior = .never
         self.listScroll.isScrollEnabled = false
         self.listScroll.showsVerticalScrollIndicator = false
         // Касание строки — как в родном списке чатов: подсветка при нажатии, чат открывается при отпускании.
@@ -4129,7 +4132,8 @@ private final class ConceptsTopicSwipePanel: UIView, UIGestureRecognizerDelegate
         var backgrounds: [UIView] = []
         // Подпись настоящей шапки видна сразу, если в карточке была своя (из ряда — капсула, из списка — шапка
         // собранного заранее предпросмотра); иначе проявляется вместе с кнопками.
-        let keepTitle = !self.openedFromList || !(self.currentPreview?.navigationBar?.view.isHidden ?? true)
+        // v50: из списка подпись проявляется вместе с кнопками (раньше капсула появлялась на ≈0,15 с раньше «назад» и аватарки).
+        let keepTitle = !self.openedFromList
         func collect(_ view: UIView) {
             for subview in view.subviews where !subview.isHidden {
                 if keepTitle, let title = chat.chatTitleView, title === subview || title.isDescendant(of: subview) {
@@ -4224,7 +4228,10 @@ private final class ConceptsTopicSwipePanel: UIView, UIGestureRecognizerDelegate
                 return
             }
             ConceptsTopicSwipeAutopilot.mark("navControls|\(Int((CACurrentMediaTime() - start) * 1000.0))")
-            fadeIn(otherControls)
+            // v50: из списка все кнопки и подпись проявляются одним ходом — вместе с аватаркой (showAvatar).
+            if !self.openedFromList {
+                fadeIn(otherControls)
+            }
         }
         var stableFrames = 0
         func showAvatar() {
@@ -4238,7 +4245,7 @@ private final class ConceptsTopicSwipePanel: UIView, UIGestureRecognizerDelegate
                 return
             }
             ConceptsTopicSwipeAutopilot.mark("navAvatar|\(Int((CACurrentMediaTime() - start) * 1000.0))|\(avatarControls.count)")
-            fadeIn(avatarControls)
+            fadeIn(self.openedFromList ? controls : avatarControls)
         }
         // v29: старт на следующем кадре, не в том же такте, что встраивание: из списка кнопки иначе мелькали целиком на 1 кадр.
         Queue.mainQueue().after(1.0 / 60.0, {
@@ -4281,7 +4288,8 @@ private final class ConceptsTopicSwipePanel: UIView, UIGestureRecognizerDelegate
             }
             // v22: карточка со списком раскрывается в чат так же, как с предпросмотром; меняется только содержимое —
             // список гаснет с размытием, чат проявляется из размытия (v21 — въезд справа, не то).
-            self.nativeTitle(self.currentPreview)?.alpha = 1.0
+            // v50: капсула предпросмотра скрыта — подпись проявится в настоящей шапке разом с кнопками.
+            self.nativeTitle(self.currentPreview)?.alpha = 0.0
             // Список на время перехода — неподвижный снимок поверх чата: живой при раскрытии карточки перекладывался
             // (прокрутка упиралась в новый размер, строки прыгали).
             // v25: гаснет сам список, без снимка — снимок стоил ≈50 мс в первом кадре, и список пропадал рывком.
